@@ -1,7 +1,12 @@
 # PQ-Discovery — artifacts
 
 Measurement data, analysis code and test harnesses for a study of post-quantum identity on
-Ethereum's discovery layer (discv5 / EIP-778 Ethereum Node Records).
+discv5-based peer discovery.
+
+Three networks are measured: **Ethereum**'s consensus-layer discv5 (55,095 nodes), **Waku**
+(n=56, operated by Logos), and **Codex** (n=8), which runs a discv5-derived DHT using libp2p
+Signed Peer Records instead of EIP-778 records. Ethereum and Waku carry the quantitative
+results; Codex is used only as an existence proof about the record container.
 
 The accompanying paper is in preparation. This repository is published independently of it so
 that every figure can be re-derived from the data rather than taken on trust.
@@ -18,7 +23,7 @@ costs per lookup, and whether a new identity scheme could be deployed incrementa
 |---|---|
 | `data/crawl-eth-v2.csv` | the main crawl — 600 random-target FINDNODE lookups, 68 minutes, 378,337 record observations across 55,095 distinct nodes |
 | `data/crawl-eth.csv`, `crawl-eth-long.csv`, `crawl-eth-pilot.csv` | earlier and longer-interval Ethereum crawls, used for churn and turnover measurement |
-| `data/crawl-waku*.csv` | Waku crawls (n=56), used only as a regime contrast |
+| `data/crawl-waku*.csv` | Waku crawls (n=56, ~60,500 observations) — a small, homogeneous, near-cap network used as a regime contrast against Ethereum |
 | `data/liboqs-speed-sig*.txt` | signature verification benchmarks, both build targets |
 | `data/qruov-sizes.tsv` | QR-UOV parameter sizes read from the reference implementation |
 | `analysis/*.py` | every script that turns the CSVs into the paper's figures |
@@ -52,7 +57,15 @@ the raw records for review, open an issue: they can be republished with `ip`, `i
 `multiaddrs` removed, which preserves everything the analyses use, at the cost of the records no
 longer carrying verifiable signatures.
 
+**Codex source records are also withheld**, for the same reason. Codex publishes libp2p Signed
+Peer Records (`spr:`) rather than ENRs, and these likewise embed addresses inside a base64
+encoding — they scan clean as plaintext and are not. The Codex figures in the paper are record
+*sizes* (189–190 bytes), which the derived measurements carry.
+
 No attempt is made anywhere in this work to associate a node with a person or an organisation.
+
+**Conflict of interest.** Waku is operated by Logos, the author's employer. The Waku measurements
+here are of a production fleet operated by that employer.
 
 ## Reproducing
 
