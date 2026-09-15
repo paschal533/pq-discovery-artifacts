@@ -1,0 +1,838 @@
+# Instrumentation applied to sigp/discv5 for the PQ-Discovery measurements.
+# Base commit: 5129edac42192802f3c1ccb8f8c85cd698eb9ee9  (Fix clippy errors (#310))
+# Generated: 2026-09-15T15:50:13Z
+#
+# The read-only logging hook in discovered() plus the harnesses used in paper sections 5 and 7.
+#
+diff --git a/examples/coexist.rs b/examples/coexist.rs
+new file mode 100644
+index 0000000..601e151
+--- /dev/null
++++ b/examples/coexist.rs
+@@ -0,0 +1,100 @@
++//! RQ4 — what does a `v4`-only node do with a record it cannot verify?
++//!
++//! Reading `enr-0.13.0/src/lib.rs` suggests two different behaviours for an
++//! unrecognised identity scheme:
++//!
++//!   lib.rs:469-476  `verify()` returns false           — graceful
++//!   lib.rs:1149     `decode()` returns Err(...)        — the record cannot be parsed
++//!
++//! and `discv5/src/rpc.rs:459` decodes each ENR in a NODES response with `?`, so a
++//! decode error propagates out of the whole message.
++//!
++//! If that chain holds, a single post-quantum record in a NODES response makes a
++//! `v4`-only node discard *every* record in it, not just the one it cannot read.
++//! That is the difference between a migration path and a denial-of-service vector,
++//! so it is worth demonstrating rather than inferring.
++//!
++//! Method: take real, valid records and substitute the two bytes "v4" with "v5" in
++//! the encoded RLP. Both are 2-byte strings, so every length prefix stays correct
++//! and the bytes remain well-formed RLP — only the identity scheme changes. The
++//! signature no longer matches, which is irrelevant: decoding happens first.
++//!
++//! Usage:  cargo run --release --example coexist
++
++use alloy_rlp::Decodable;
++use discv5::enr::{CombinedKey, Enr};
++use discv5::rpc::{Message, Response, ResponseBody};
++use discv5::RequestId;
++
++/// Replace the RLP-encoded string "v4" with "v5". Both encode as 0x82 'v' '4',
++/// so this is a single-byte substitution that preserves every length prefix.
++fn to_v5(bytes: &[u8]) -> Vec<u8> {
++    let needle = [0x82u8, b'v', b'4'];
++    let mut out = bytes.to_vec();
++    for i in 0..out.len().saturating_sub(2) {
++        if out[i..i + 3] == needle {
++            out[i + 2] = b'5';
++            return out;
++        }
++    }
++    panic!("no RLP-encoded \"v4\" found");
++}
++
++fn main() {
++    let mut keys = Vec::new();
++    let mut enrs: Vec<Enr<CombinedKey>> = Vec::new();
++    for i in 0..3u16 {
++        let key = CombinedKey::generate_secp256k1();
++        let enr = Enr::builder()
++            .ip4([127, 0, 0, i as u8 + 1].into())
++            .udp4(9000 + i)
++            .build(&key)
++            .unwrap();
++        keys.push(key);
++        enrs.push(enr);
++    }
++
++    println!("== 1. a normal v4 record ==");
++    let good = alloy_rlp::encode(&enrs[0]);
++    match Enr::<CombinedKey>::decode(&mut good.as_slice()) {
++        Ok(e) => println!("   decode: OK      id={:?}  verify()={}", e.id(), e.verify()),
++        Err(e) => println!("   decode: Err({e:?})"),
++    }
++
++    println!("\n== 2. the same record with id = \"v5\" ==");
++    let pq = to_v5(&good);
++    assert_eq!(pq.len(), good.len(), "substitution changed the length");
++    match Enr::<CombinedKey>::decode(&mut pq.as_slice()) {
++        Ok(e) => println!("   decode: OK      id={:?}  verify()={}", e.id(), e.verify()),
++        Err(e) => println!("   decode: Err({e:?})   <-- cannot even be parsed"),
++    }
++
++    println!("\n== 3. a NODES response carrying 3 valid v4 records ==");
++    let msg = Message::Response(Response {
++        id: RequestId(vec![1]),
++        body: ResponseBody::Nodes { total: 1, nodes: enrs.clone() },
++    });
++    let encoded = msg.encode();
++    match Message::decode(&encoded) {
++        Ok(Message::Response(Response { body: ResponseBody::Nodes { nodes, .. }, .. })) => {
++            println!("   decode: OK      {} records recovered", nodes.len())
++        }
++        Ok(_) => println!("   decode: OK but not a NODES response"),
++        Err(e) => println!("   decode: Err({e:?})"),
++    }
++
++    println!("\n== 4. the same response, with ONE record switched to id = \"v5\" ==");
++    println!("   (2 of the 3 records are untouched, valid, signed v4 records)");
++    let poisoned = to_v5(&encoded);
++    assert_eq!(poisoned.len(), encoded.len());
++    match Message::decode(&poisoned) {
++        Ok(Message::Response(Response { body: ResponseBody::Nodes { nodes, .. }, .. })) => {
++            println!("   decode: OK      {} records recovered", nodes.len())
++        }
++        Ok(_) => println!("   decode: OK but not a NODES response"),
++        Err(e) => {
++            println!("   decode: Err({e:?})");
++            println!("   -> ALL 3 records lost, including the 2 valid v4 ones.");
++        }
++    }
++}
+diff --git a/examples/coexist_wire.rs b/examples/coexist_wire.rs
+new file mode 100644
+index 0000000..4501425
+--- /dev/null
++++ b/examples/coexist_wire.rs
+@@ -0,0 +1,101 @@
++//! RQ4 gap #7 — the coexistence failure, demonstrated over real UDP.
++//!
++//! `examples/coexist.rs` shows the failure by constructing and decoding messages
++//! in-process. That exercises the same decode path the network uses, but a reviewer
++//! is entitled to discount it: nothing crossed a socket. This runs two real discv5
++//! nodes on localhost, with a genuine handshake, encryption and UDP transport, and
++//! shows the querier receive a response and end up with nothing.
++//!
++//! The scenario is the one that actually matters — C3a, not an attack. Node B is an
++//! *upgraded, honest* node that serves a record under an identity scheme node A does
++//! not recognise. B is behaving correctly. A loses the entire response anyway,
++//! including the records it could have used, and neither side sees an error.
++//!
++//! Node B emits the `v5` record via the DISCV5_EMIT_V5_RECORD hook in `rpc.rs`,
++//! which rewrites one record's scheme at encode time. That models an upgraded node
++//! without needing a second, differently-built binary.
++//!
++//! Usage:
++//!     cargo run --release --example coexist_wire            # control: all v4
++//!     DISCV5_EMIT_V5_RECORD=1 cargo run --release --example coexist_wire
++
++use discv5::{enr, ConfigBuilder, Discv5, Enr, ListenConfig};
++use std::net::Ipv4Addr;
++use std::time::Duration;
++
++fn node(port: u16) -> (Discv5, Enr) {
++    let key = enr::CombinedKey::generate_secp256k1();
++    let enr = Enr::builder()
++        .ip4(Ipv4Addr::LOCALHOST)
++        .udp4(port)
++        .build(&key)
++        .unwrap();
++    let listen = ListenConfig::from_ip(Ipv4Addr::LOCALHOST.into(), port);
++    let config = ConfigBuilder::new(listen).build();
++    let d = Discv5::new(enr.clone(), key, config).unwrap();
++    (d, enr)
++}
++
++#[tokio::main]
++async fn main() {
++    // so RUST_LOG can show the decode failure on the querier side
++    let _ = tracing_subscriber::fmt()
++        .with_env_filter(
++            tracing_subscriber::EnvFilter::try_from_default_env()
++                .unwrap_or_else(|_| "coexist_wire=info".into()),
++        )
++        .try_init();
++
++    let emitting_v5 = std::env::var("DISCV5_EMIT_V5_RECORD").is_ok();
++    println!(
++        "responder serves records as: {}\n",
++        if emitting_v5 { "v5 (one record rewritten on the wire)" } else { "v4 (control)" }
++    );
++
++    // B is the responder. It is given several records to serve.
++    let (mut b, b_enr) = node(9301);
++    let mut served = 0usize;
++    for i in 0..4u16 {
++        let k = enr::CombinedKey::generate_secp256k1();
++        let e = Enr::builder()
++            .ip4(Ipv4Addr::new(127, 0, 0, (i + 2) as u8))
++            .udp4(9400 + i)
++            .build(&k)
++            .unwrap();
++        if b.add_enr(e).is_ok() {
++            served += 1;
++        }
++    }
++    b.start().await.unwrap();
++    println!("responder up on 9301 with {served} records in its table");
++
++    // A is the querier: a stock node that only knows v4.
++    let (mut a, _a_enr) = node(9302);
++    a.add_enr(b_enr.clone()).unwrap();
++    a.start().await.unwrap();
++    println!("querier   up on 9302, seeded with the responder's ENR");
++
++    tokio::time::sleep(Duration::from_secs(2)).await;
++
++    // Ask B for everything it has. This is a real request over UDP: session
++    // handshake, encrypted message, the lot.
++    let target = b_enr.node_id();
++    let distances: Vec<u64> = (240..=256).collect();
++    match a.find_node_designated_peer(b_enr.clone(), distances).await {
++        Ok(found) => {
++            println!("\nquerier received {} records", found.len());
++            for e in &found {
++                println!("   {} udp={:?}", e.node_id(), e.udp4());
++            }
++            if found.is_empty() {
++                println!("\n   -> the responder served records and the querier got NOTHING.");
++                println!("      Not an error, not a timeout — an empty result set.");
++            }
++        }
++        Err(e) => {
++            println!("\nquerier request failed: {e:?}");
++            println!("   -> the whole response was discarded.");
++        }
++    }
++    let _ = target;
++}
+diff --git a/examples/crawl.rs b/examples/crawl.rs
+new file mode 100644
+index 0000000..e5ad54a
+--- /dev/null
++++ b/examples/crawl.rs
+@@ -0,0 +1,149 @@
++//! Discovery crawler for the PQ-Discovery study (RQ2 rounds-per-lookup, RQ3 cache hit rate).
++//!
++//! Bootstraps from a file of ENRs, then runs repeated random-target FINDNODE lookups.
++//! Every ENR in every NODES response is logged by the hook in `src/crawl_log.rs`,
++//! including repeats, which is the whole point: the cache hit rate is a property of
++//! how often the same record comes back, so deduplicated data cannot answer it.
++//!
++//! Usage:
++//!   DISCV5_CRAWL_LOG=crawl.csv cargo run --release --example crawl -- \
++//!       --bootnodes eth-mainnet-enrs.txt --lookups 200 --port 9000
++//!
++//! The bootnode file is one ENR per line; blank lines and `#` comments are skipped.
++
++use clap::Parser;
++use discv5::{enr, ConfigBuilder, Discv5, Enr, ListenConfig, ProtocolIdentity};
++use std::convert::TryInto;
++use std::net::Ipv4Addr;
++use std::time::{Duration, Instant};
++
++#[derive(Parser)]
++struct Args {
++    /// File of bootstrap ENRs, one per line.
++    #[clap(long)]
++    bootnodes: String,
++    /// Number of random-target lookups to perform.
++    #[clap(long, default_value_t = 100)]
++    lookups: usize,
++    /// Local UDP port.
++    #[clap(long, default_value_t = 9000)]
++    port: u16,
++    /// Seconds to wait between lookups. 0 runs them back to back.
++    #[clap(long, default_value_t = 1)]
++    interval: u64,
++    /// discv5 protocol id, exactly 6 bytes. Ethereum uses the default "discv5";
++    /// Waku builds nim-eth with -d:discv5_protocol_id=d5waku, so its discovery
++    /// network is protocol-isolated and needs "d5waku" here.
++    #[clap(long, default_value = "discv5")]
++    protocol_id: String,
++}
++
++#[tokio::main]
++async fn main() {
++    tracing_subscriber::fmt()
++        .with_env_filter("crawl=info,discv5=warn")
++        .init();
++    let args = Args::parse();
++
++    let boots = load_bootnodes(&args.bootnodes);
++    if boots.is_empty() {
++        eprintln!("no usable ENRs in {}", args.bootnodes);
++        std::process::exit(1);
++    }
++    println!("loaded {} bootnode ENRs", boots.len());
++
++    let enr_key = enr::CombinedKey::generate_secp256k1();
++    let local_enr = Enr::builder().build(&enr_key).unwrap();
++    let listen = ListenConfig::from_ip(Ipv4Addr::UNSPECIFIED.into(), args.port);
++    let pid: [u8; 6] = args
++        .protocol_id
++        .as_bytes()
++        .try_into()
++        .expect("--protocol-id must be exactly 6 bytes");
++    println!("protocol id: {:?}", args.protocol_id);
++
++    let config = ConfigBuilder::new(listen)
++        // the hook does not depend on this, but leaving it off keeps the bounded
++        // event channel idle so it cannot backpressure the service thread
++        .disable_report_discovered_peers()
++        .protocol_identity(ProtocolIdentity {
++            protocol_id: pid,
++            protocol_version: 0x0001_u16.to_be_bytes(),
++        })
++        .build();
++
++    let mut discv5: Discv5 = Discv5::new(local_enr, enr_key, config).unwrap();
++    let mut added = 0usize;
++    for enr in boots {
++        if discv5.add_enr(enr).is_ok() {
++            added += 1;
++        }
++    }
++    println!("seeded routing table with {added} ENRs");
++
++    discv5.start().await.unwrap();
++    // let sessions establish before the first lookup, otherwise early queries
++    // return nothing and skew the per-lookup counts
++    tokio::time::sleep(Duration::from_secs(3)).await;
++
++    let start = Instant::now();
++    let mut total_returned = 0usize;
++    for i in 1..=args.lookups {
++        let target = enr::NodeId::random();
++        match discv5.find_node(target).await {
++            Ok(found) => {
++                total_returned += found.len();
++                println!(
++                    "lookup {i}/{} returned {} records (peers={}, elapsed={:?})",
++                    args.lookups,
++                    found.len(),
++                    discv5.connected_peers(),
++                    start.elapsed()
++                );
++            }
++            Err(e) => println!("lookup {i}/{} failed: {e:?}", args.lookups),
++        }
++        if args.interval > 0 && i < args.lookups {
++            tokio::time::sleep(Duration::from_secs(args.interval)).await;
++        }
++    }
++
++    // find_node() returns the deduplicated closest set; the raw stream with repeats
++    // is in the CSV. The two differing is expected and is itself a data point.
++    println!(
++        "\n{} lookups, {total_returned} records returned after dedup, {:?} elapsed",
++        args.lookups,
++        start.elapsed()
++    );
++    discv5::crawl_log::flush();
++    println!("log flushed");
++}
++
++fn load_bootnodes(path: &str) -> Vec<Enr> {
++    let text = match std::fs::read_to_string(path) {
++        Ok(t) => t,
++        Err(e) => {
++            eprintln!("cannot read {path}: {e}");
++            std::process::exit(1);
++        }
++    };
++    let mut out = Vec::new();
++    for line in text.lines() {
++        let mut line = line.trim();
++        if line.is_empty() || line.starts_with('#') {
++            continue;
++        }
++        // bootnode lists are commonly YAML sequences ("- enr:...") and often carry a
++        // trailing "# 203.0.113.0 | aws-..." annotation, so take the first token.
++        line = line.trim_start_matches("- ").trim();
++        line = line.split_whitespace().next().unwrap_or("");
++        if !line.starts_with("enr:") {
++            continue;
++        }
++        match line.parse::<Enr>() {
++            Ok(enr) => out.push(enr),
++            Err(e) => eprintln!("skipping unparseable ENR: {e}"),
++        }
++    }
++    out
++}
+diff --git a/examples/poison.rs b/examples/poison.rs
+new file mode 100644
+index 0000000..50bf2e6
+--- /dev/null
++++ b/examples/poison.rs
+@@ -0,0 +1,128 @@
++//! Gap #8 — is the whole-response loss specific to unknown identity schemes,
++//! or does ANY undecodable record do it?
++//!
++//! COEXISTENCE.md establishes that a record with an unrecognised `id` discards the
++//! entire NODES response. But `enr` 0.13.0 rejects records for several other reasons
++//! too — unsorted keys (lib.rs:1139-1141), oversized records (lib.rs:1119), and a
++//! failed signature check (lib.rs:1205-1208), plus the per-field validation in
++//! `check_spec_reserved_keys` (lib.rs:1251).
++//!
++//! If those also blank a response, the finding stops being about a hypothetical
++//! future identity scheme and becomes about the network as it runs today: one
++//! corrupted record from any cause destroys every record travelling with it.
++//!
++//! Every mutation below is LENGTH-PRESERVING, so the RLP framing stays valid and
++//! only the record's content changes. That isolates the variable: any failure is
++//! the decoder rejecting content, not malformed framing.
++//!
++//! Usage:  cargo run --release --example poison
++
++use alloy_rlp::Decodable;
++use discv5::enr::{CombinedKey, Enr};
++use discv5::rpc::{Message, Response, ResponseBody};
++use discv5::RequestId;
++
++/// Flip one bit in the last byte of the record. For a well-formed ENR the tail is
++/// inside the final field's value, so this corrupts content without touching any
++/// length prefix. Models a bit flip in transit or a buggy encoder.
++fn corrupt_tail(bytes: &[u8]) -> Vec<u8> {
++    let mut out = bytes.to_vec();
++    let n = out.len();
++    out[n - 1] ^= 0x01;
++    out
++}
++
++/// Substitute the RLP string "id" with "ie". Both are 2 bytes so every length
++/// prefix is preserved, but "ie" > "id" sorts after "ip", breaking the ascending
++/// key order the decoder requires (lib.rs:1139-1141).
++fn unsort_keys(bytes: &[u8]) -> Vec<u8> {
++    let needle = [0x82u8, b'i', b'd'];
++    let mut out = bytes.to_vec();
++    for i in 0..out.len().saturating_sub(2) {
++        if out[i..i + 3] == needle {
++            out[i + 2] = b'e';
++            return out;
++        }
++    }
++    panic!("no RLP-encoded \"id\" found");
++}
++
++/// The COEXISTENCE.md mutation, for comparison: "v4" -> "v5".
++fn to_v5(bytes: &[u8]) -> Vec<u8> {
++    let needle = [0x82u8, b'v', b'4'];
++    let mut out = bytes.to_vec();
++    for i in 0..out.len().saturating_sub(2) {
++        if out[i..i + 3] == needle {
++            out[i + 2] = b'5';
++            return out;
++        }
++    }
++    panic!("no RLP-encoded \"v4\" found");
++}
++
++fn main() {
++    let enrs: Vec<Enr<CombinedKey>> = (0..3u16)
++        .map(|i| {
++            let key = CombinedKey::generate_secp256k1();
++            Enr::builder()
++                .ip4([127, 0, 0, i as u8 + 1].into())
++                .udp4(9000 + i)
++                .tcp4(9000 + i)
++                .build(&key)
++                .unwrap()
++        })
++        .collect();
++
++    let mutations: [(&str, fn(&[u8]) -> Vec<u8>); 3] = [
++        ("unknown identity scheme (id v4 -> v5)", to_v5),
++        ("corrupted signature (one bit flipped)", corrupt_tail),
++        ("unsorted keys (id -> ie)", unsort_keys),
++    ];
++
++    println!("Each mutation is length-preserving, so RLP framing stays valid.\n");
++    println!("{:<40} {:>14} {:>28}", "mutation", "record alone", "3-record NODES response");
++    println!("{}", "-".repeat(84));
++
++    for (name, mutate) in mutations {
++        // the record on its own
++        let one = alloy_rlp::encode(&enrs[0]);
++        let m = mutate(&one);
++        assert_eq!(m.len(), one.len(), "{name}: mutation changed length");
++        let alone = match Enr::<CombinedKey>::decode(&mut m.as_slice()) {
++            Ok(_) => "decodes".to_string(),
++            Err(_) => "rejected".to_string(),
++        };
++
++        // the same record as one of three in a NODES response
++        let msg = Message::Response(Response {
++            id: RequestId(vec![1]),
++            body: ResponseBody::Nodes { total: 1, nodes: enrs.clone() },
++        });
++        let encoded = msg.encode();
++        let poisoned = mutate(&encoded);
++        assert_eq!(poisoned.len(), encoded.len());
++        let resp = match Message::decode(&poisoned) {
++            Ok(Message::Response(Response {
++                body: ResponseBody::Nodes { nodes, .. }, ..
++            })) => format!("{} of 3 survive", nodes.len()),
++            Ok(_) => "not a NODES response".to_string(),
++            Err(_) => "ALL 3 LOST".to_string(),
++        };
++
++        println!("{name:<40} {alone:>14} {resp:>28}");
++    }
++
++    // control: no mutation at all
++    let msg = Message::Response(Response {
++        id: RequestId(vec![1]),
++        body: ResponseBody::Nodes { total: 1, nodes: enrs.clone() },
++    });
++    let encoded = msg.encode();
++    let ctrl = match Message::decode(&encoded) {
++        Ok(Message::Response(Response {
++            body: ResponseBody::Nodes { nodes, .. }, ..
++        })) => format!("{} of 3 survive", nodes.len()),
++        _ => "unexpected".to_string(),
++    };
++    println!("{:<40} {:>14} {ctrl:>28}", "(control: unmodified)", "decodes");
++}
+diff --git a/examples/roundtrip.rs b/examples/roundtrip.rs
+new file mode 100644
+index 0000000..525898f
+--- /dev/null
++++ b/examples/roundtrip.rs
+@@ -0,0 +1,36 @@
++//! Q3 — can `Enr::size()` differ from the RLP header's declared length?
++//!
++//! `rpc.rs:462` advances the NODES cursor by `enr_rlp.size()` (the re-encoded size)
++//! while the bounds check above it uses `node_header.length_with_payload()` (the
++//! declared size). If those can differ, the record stream desynchronises on an
++//! attacker-chosen encoding — an independent bug, separate from tolerant decoding.
++//!
++//! Tested against real wire records from the crawls.
++use alloy_rlp::{Decodable, Header};
++use discv5::enr::{CombinedKey, Enr};
++
++fn main() {
++    let mut n = 0usize;
++    let mut differ = 0usize;
++    for path in ["../../budget/data/waku-records.txt", "../../budget/data/eth-mainnet-enrs.txt"] {
++        let Ok(txt) = std::fs::read_to_string(path) else { continue };
++        for line in txt.lines() {
++            let tok = line.trim().trim_start_matches("- ");
++            let Some(tok) = tok.split_whitespace().next() else { continue };
++            if !tok.starts_with("enr:") { continue }
++            let Ok(enr) = tok.parse::<Enr<CombinedKey>>() else { continue };
++            let encoded = alloy_rlp::encode(&enr);
++            let declared = Header::decode(&mut &encoded[..])
++                .map(|h| h.length_with_payload())
++                .unwrap_or(0);
++            n += 1;
++            if enr.size() != declared { differ += 1; }
++        }
++    }
++    println!("records checked: {n}");
++    println!("size() != header.length_with_payload(): {differ}");
++    println!();
++    println!("Note: this only shows the two agree on records the crate itself produced");
++    println!("by re-encoding. It does NOT prove they agree on a hostile non-canonical");
++    println!("encoding, because decode() rejects those before we could observe it.");
++}
+diff --git a/examples/verify_bench.rs b/examples/verify_bench.rs
+new file mode 100644
+index 0000000..3b82ed7
+--- /dev/null
++++ b/examples/verify_bench.rs
+@@ -0,0 +1,110 @@
++//! Measures what discovery actually pays per record: ENR signature verification,
++//! including the RLP re-encoding of the record content that verification requires.
++//!
++//! WORKLOAD.md previously carried a *projected* ~60 us for secp256k1. That figure is
++//! load-bearing for RQ3 (it is the bar a post-quantum scheme has to clear), so it
++//! should be measured rather than assumed.
++//!
++//! Records come from a crawl log's companion file, or are generated locally if none
++//! is given. Verification cost does not depend on record contents beyond length, so
++//! generated records are representative; real ones are used when available to keep
++//! the field mix honest.
++//!
++//! Usage:  cargo run --release --example verify_bench -- [enr_file]
++
++use discv5::enr::{CombinedKey, Enr};
++use std::time::Instant;
++
++fn main() {
++    let args: Vec<String> = std::env::args().collect();
++
++    let records: Vec<Enr<CombinedKey>> = if args.len() > 1 {
++        let text = std::fs::read_to_string(&args[1]).expect("cannot read enr file");
++        text.lines()
++            .filter_map(|l| {
++                let l = l.trim().trim_start_matches("- ").split_whitespace().next()?;
++                if l.starts_with("enr:") {
++                    l.parse().ok()
++                } else {
++                    None
++                }
++            })
++            .collect()
++    } else {
++        // A spread of record sizes matching the crawl's p50..p99 (165..286 B).
++        (0..64)
++            .map(|i| {
++                let key = CombinedKey::generate_secp256k1();
++                let mut b = Enr::builder();
++                b.ip4([1, 2, 3, 4].into()).udp4(9000).tcp4(9000);
++                // pad toward realistic sizes with an opaque field
++                let pad = vec![0xabu8; (i % 8) * 16];
++                b.add_value("pad", &pad.as_slice());
++                b.build(&key).unwrap()
++            })
++            .collect()
++    };
++
++    if records.is_empty() {
++        eprintln!("no records");
++        std::process::exit(1);
++    }
++
++    let sizes: Vec<usize> = records.iter().map(|e| e.size()).collect();
++    let mean_size = sizes.iter().sum::<usize>() as f64 / sizes.len() as f64;
++    println!(
++        "{} records, size min/mean/max = {}/{:.0}/{}",
++        records.len(),
++        sizes.iter().min().unwrap(),
++        mean_size,
++        sizes.iter().max().unwrap()
++    );
++
++    // warm up, so the first-call cost of lazily-initialised context does not land
++    // in the measurement
++    for _ in 0..1000 {
++        for r in &records {
++            std::hint::black_box(r.verify());
++        }
++    }
++
++    let rounds = 200usize;
++    let mut best = f64::MAX;
++    for _ in 0..5 {
++        let t = Instant::now();
++        for _ in 0..rounds {
++            for r in &records {
++                std::hint::black_box(r.verify());
++            }
++        }
++        let per = t.elapsed().as_secs_f64() * 1e6 / (rounds * records.len()) as f64;
++        if per < best {
++            best = per;
++        }
++    }
++
++    // The liboqs speed_sig figures measure raw signature verification only. This
++    // number includes the RLP re-encode that ENR verification performs first, so
++    // decompose it, otherwise the comparison is not like for like.
++    let mut enc = f64::MAX;
++    for _ in 0..5 {
++        let t = Instant::now();
++        for _ in 0..rounds {
++            for r in &records {
++                std::hint::black_box(r.size());
++            }
++        }
++        let per = t.elapsed().as_secs_f64() * 1e6 / (rounds * records.len()) as f64;
++        if per < enc {
++            enc = per;
++        }
++    }
++
++    println!("secp256k1 ENR verify: {best:.2} us/record  (best of 5)");
++    println!("  of which RLP encode: {enc:.2} us   -> signature check ~{:.2} us", best - enc);
++    println!("  (post-quantum schemes pay the same encode cost on top of their raw figure)");
++    println!();
++    for (label, n) in [("uncached", 672.4), ("strict cache", 168.0), ("warm cache", 138.2)] {
++        println!("  {label:<14} {:>6.1} verifications/lookup -> {:>6.1} ms", n, n * best / 1000.0);
++    }
++}
+diff --git a/src/crawl_log.rs b/src/crawl_log.rs
+new file mode 100644
+index 0000000..967c5e7
+--- /dev/null
++++ b/src/crawl_log.rs
+@@ -0,0 +1,90 @@
++//! Measurement hook for the PQ-Discovery study (RQ2/RQ3).
++//!
++//! Records every ENR as it arrives in a NODES response, before discv5 filters or
++//! deduplicates it. This is deliberately not built on the public `Event::Discovered`
++//! stream, for two reasons found in `service.rs`:
++//!
++//!   * the event channel is bounded at 100 and `send_event` only handles `Closed`,
++//!     so a brief consumer stall drops events silently — and it would drop them
++//!     during traffic bursts, which is exactly when repeats are most likely;
++//!   * `Event::Discovered(Enr)` carries only the ENR, losing the `source` node and
++//!     `query_id` that `discovered()` has in hand. Both are needed: source to
++//!     attribute records to the peer that served them, query_id to group records
++//!     into lookups.
++//!
++//! Writing straight from `discovered()` avoids both. Enabled only when
++//! DISCV5_CRAWL_LOG names an output path, so an unset variable leaves upstream
++//! behaviour untouched.
++
++use std::collections::HashSet;
++use std::fs::File;
++use std::io::{BufWriter, Write};
++use std::sync::{Mutex, OnceLock};
++use std::time::{SystemTime, UNIX_EPOCH};
++
++static LOG: OnceLock<Option<Mutex<BufWriter<File>>>> = OnceLock::new();
++
++/// Distinct records, written once per (node_id, seq). RQ1's field decomposition
++/// needs the record itself, not just its length, but writing every observation
++/// would be ~24 MB on Ethereum for no extra information.
++static ENRS: OnceLock<Option<Mutex<(BufWriter<File>, HashSet<String>)>>> = OnceLock::new();
++
++fn sink() -> Option<&'static Mutex<BufWriter<File>>> {
++    LOG.get_or_init(|| {
++        let path = std::env::var("DISCV5_CRAWL_LOG").ok()?;
++        let f = File::create(&path).ok()?;
++        let mut w = BufWriter::new(f);
++        let _ = writeln!(w, "ts_ms,query_id,source,node_id,seq,size");
++        Some(Mutex::new(w))
++    })
++    .as_ref()
++}
++
++fn enr_sink() -> Option<&'static Mutex<(BufWriter<File>, HashSet<String>)>> {
++    ENRS.get_or_init(|| {
++        let path = std::env::var("DISCV5_CRAWL_ENRS").ok()?;
++        let f = File::create(&path).ok()?;
++        Some(Mutex::new((BufWriter::new(f), HashSet::new())))
++    })
++    .as_ref()
++}
++
++/// Record the base64 ENR itself, once per distinct (node_id, seq).
++pub(crate) fn record_enr(node_id: &str, seq: u64, base64: &str) {
++    let Some(lock) = enr_sink() else { return };
++    if let Ok(mut g) = lock.lock() {
++        let key = format!("{node_id}:{seq}");
++        if g.1.insert(key) {
++            let _ = writeln!(g.0, "{base64}");
++        }
++    }
++}
++
++/// One observation: this ENR arrived from `source`, during `query_id`, at this instant.
++///
++/// `size` is the RLP-encoded length, i.e. the figure the EIP-778 300-byte cap applies to.
++pub(crate) fn record(source: &str, query_id: Option<usize>, node_id: &str, seq: u64, size: usize) {
++    let Some(lock) = sink() else { return };
++    let ts = SystemTime::now()
++        .duration_since(UNIX_EPOCH)
++        .map(|d| d.as_millis())
++        .unwrap_or(0);
++    if let Ok(mut w) = lock.lock() {
++        let q = query_id.map_or_else(|| "-".to_string(), |q| q.to_string());
++        let _ = writeln!(w, "{ts},{q},{source},{node_id},{seq},{size}");
++    }
++}
++
++/// Flush before exit; a buffered tail would otherwise be lost.
++pub fn flush() {
++    if let Some(lock) = sink() {
++        if let Ok(mut w) = lock.lock() {
++            let _ = w.flush();
++        }
++    }
++    if let Some(lock) = enr_sink() {
++        if let Ok(mut g) = lock.lock() {
++            let _ = g.0.flush();
++        }
++    }
++}
+diff --git a/src/lib.rs b/src/lib.rs
+index 0c70ed6..113e50a 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -94,6 +94,7 @@
+ //!    });
+ //! ```
+ 
++pub mod crawl_log;
+ mod config;
+ mod discv5;
+ mod error;
+@@ -107,7 +108,7 @@ mod node_info;
+ pub mod packet;
+ pub mod permit_ban;
+ mod query_pool;
+-pub(crate) mod rpc;
++pub mod rpc; // made public for the RQ4 coexistence experiment (examples/coexist.rs)
+ pub mod service;
+ pub mod socket;
+ 
+diff --git a/src/rpc.rs b/src/rpc.rs
+index e32445b..728b0d1 100644
+--- a/src/rpc.rs
++++ b/src/rpc.rs
+@@ -222,6 +222,21 @@ impl Response {
+                     for node in nodes.clone() {
+                         node.encode(&mut out);
+                     }
++                    // RQ4 over-the-wire experiment (examples/coexist_wire.rs).
++                    // With DISCV5_EMIT_V5_RECORD set, rewrite the first record's
++                    // identity scheme to "v5" on the wire. This models an upgraded
++                    // node legitimately serving a record under a scheme a v4-only
++                    // peer does not recognise. Both strings are 2 bytes, so every
++                    // RLP length prefix is unchanged. Inert unless the variable is set.
++                    if std::env::var("DISCV5_EMIT_V5_RECORD").is_ok() {
++                        let needle = [0x82u8, b'v', b'4'];
++                        for i in 0..out.len().saturating_sub(2) {
++                            if out[i..i + 3] == needle {
++                                out[i + 2] = b'5';
++                                break;
++                            }
++                        }
++                    }
+                     let tmp_header = Header {
+                         list: true,
+                         payload_length: out.len(),
+diff --git a/src/service.rs b/src/service.rs
+index bd69f6d..3ce5490 100644
+--- a/src/service.rs
++++ b/src/service.rs
+@@ -1247,6 +1247,24 @@ impl Service {
+                 return false;
+             }
+ 
++            // PQ-Discovery measurement hook: log before any filtering or dedup, so
++            // repeat observations of the same record are preserved. See crawl_log.rs
++            // for why this does not ride on the event stream.
++            // NodeId's Display shows only 4+4 hex chars (32 bits), which is not enough
++            // to tell nodes apart at Ethereum's population — log the full 32 bytes.
++            crate::crawl_log::record(
++                &hex::encode(source.raw()),
++                query_id.map(|q| q.0),
++                &hex::encode(enr.node_id().raw()),
++                enr.seq(),
++                enr.size(),
++            );
++            crate::crawl_log::record_enr(
++                &hex::encode(enr.node_id().raw()),
++                enr.seq(),
++                &enr.to_base64(),
++            );
++
+             // If there is an event stream send the Discovered event
+             if self.config.report_discovered_peers {
+                 self.send_event(Event::Discovered(enr.clone()));

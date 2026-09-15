@@ -1,0 +1,56 @@
+ERROR: ML-DSA-65-extmu was not enabled
+ERROR: ML-DSA-87-extmu was not enabled
+Configuration info
+==================
+Target platform:  AMD64-Windows-10.0.26200
+Compiler:         gcc (16.1.0)
+Compile options:  [-fomit-frame-pointer;-fdata-sections;-ffunction-sections;-Wl,--gc-sections;-Wno-maybe-uninitialized;-Wbad-function-cast;-Wno-unknown-pragmas;-Wno-unused-parameter]
+OQS version:      0.16.0 (major: 0, minor: 16, patch: 0)
+OpenSSL enabled:  No
+AES:              NI
+SHA-2:            C
+SHA-3:            C
+OQS build flags:  OQS_DIST_BUILD OQS_LIBJADE_BUILD OQS_OPT_TARGET=generic CMAKE_BUILD_TYPE=Release 
+CPU exts active:  ADX AES AVX AVX2 BMI1 BMI2 PCLMULQDQ POPCNT SSE SSE2 SSE3
+Speed test
+==========
+Started at 2026-09-13 09:34:05
+Operation                            | Iterations | Total time (s) | Time (us): mean | pop. stdev | CPU cycles: mean          | pop. stdev
+------------------------------------ | ----------:| --------------:| ---------------:| ----------:| -------------------------:| ----------:
+ML-DSA-44                            |            |                |                 |            |                           |           
+keypair                              |      15002 |          3.000 |         199.973 |    865.047 |                      1997 |       2184
+sign                                 |       6108 |          3.000 |         491.159 |   1250.705 |                      4911 |       5873
+verify                               |      32117 |          3.000 |          93.408 |    547.628 |                       934 |        733
+ML-DSA-44-extmu                      |            |                |                 |            |                           |           
+keypair                              |      15689 |          3.006 |         191.599 |    793.966 |                      1913 |        356
+sign                                 |       7587 |          3.000 |         395.413 |   1179.755 |                      3952 |       2083
+verify                               |      39588 |          3.004 |          75.882 |    518.771 |                       758 |        116
+MAYO-2                               |            |                |                 |            |                           |           
+keypair                              |       6721 |          3.000 |         446.362 |   1270.504 |                      4461 |        662
+sign                                 |       6511 |          3.000 |         460.759 |   1244.846 |                      4606 |        503
+verify                               |      44841 |          3.008 |          67.081 |    507.041 |                       669 |       1139
+OV-Is-pkc                            |            |                |                 |            |                           |           
+keypair                              |        215 |          3.013 |       14013.953 |   4398.180 |                    140168 |       9953
+sign                                 |       9654 |          3.005 |         311.270 |    969.796 |                      3111 |        607
+verify                               |      32493 |          3.000 |          92.328 |    623.236 |                       922 |        457
+OV-Ip-pkc                            |            |                |                 |            |                           |           
+keypair                              |        108 |          3.021 |       27972.222 |   5472.927 |                    279768 |      37580
+sign                                 |       4170 |          3.001 |         719.664 |   1271.839 |                      7194 |       1438
+verify                               |      17916 |          3.002 |         167.560 |    735.923 |                      1675 |        441
+OV-Is-pkc-skc                        |            |                |                 |            |                           |           
+keypair                              |        208 |          3.001 |       14427.885 |   3626.106 |                    144641 |      15026
+sign                                 |       4432 |          3.000 |         676.895 |   1445.249 |                      6748 |       1358
+verify                               |      31536 |          3.001 |          95.161 |    605.117 |                       953 |       1184
+OV-Ip-pkc-skc                        |            |                |                 |            |                           |           
+keypair                              |        108 |          3.010 |       27870.370 |   7125.973 |                    278706 |      59423
+sign                                 |       2102 |          3.000 |        1427.212 |   1732.650 |                     14266 |       1889
+verify                               |      18281 |          3.003 |         164.269 |    701.873 |                      1641 |       1700
+SNOVA_37_17_2                        |            |                |                 |            |                           |           
+keypair                              |       1060 |          3.003 |        2833.019 |   2468.948 |                     28322 |       4047
+sign                                 |        880 |          3.000 |        3409.091 |   2944.318 |                     34080 |       7269
+verify                               |       3228 |          3.000 |         929.368 |   1581.520 |                      9291 |       1727
+SNOVA_25_8_3                         |            |                |                 |            |                           |           
+keypair                              |       2893 |          3.002 |        1037.677 |   1838.530 |                     10378 |       6809
+sign                                 |       1494 |          3.000 |        2008.032 |   2382.149 |                     20088 |       3800
+verify                               |       3329 |          3.001 |         901.472 |   1609.308 |                      9010 |        916
+Ended at 2026-09-13 09:35:27
