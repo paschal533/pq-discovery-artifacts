@@ -1,4 +1,4 @@
-"""R10 — split the cache miss rate into its two terms, exactly.
+"""R10: split the cache miss rate into its two terms, exactly.
 
 Every distinct node is first-sighted exactly once, so
 

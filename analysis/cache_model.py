@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""RQ3 — how much of discovery's verification work is avoidable?
+"""RQ3: how much of discovery's verification work is avoidable?
 
 Replays a crawl log (produced by the hook in prototype/discv5/src/crawl_log.rs)
 through a sequence-number cache and reports, under three accounting policies, what

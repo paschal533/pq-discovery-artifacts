@@ -3,7 +3,7 @@
 
 §2 of BUDGET.md shows Waku records reach 295 of 300 bytes, with `multiaddrs`
 costing 103-127 B of that. This decodes the field to show exactly what is inside,
-and estimates how much is recoverable — which decides whether Waku can reach a
+and estimates how much is recoverable, which decides whether Waku can reach a
 post-quantum identity scheme by reclaiming bytes rather than waiting for a
 smaller signature.
 
@@ -139,7 +139,7 @@ def main() -> int:
     if dup:
         wasted = sum(len(h) * (c - 1) for h, c in hosts.items())
         print(f"\nrepeated hostnames cost {wasted} B across the sample "
-              f"({wasted/n:.0f} B per record) — recoverable by encoding each host once")
+              f"({wasted/n:.0f} B per record), recoverable by encoding each host once")
     return 0
 
 

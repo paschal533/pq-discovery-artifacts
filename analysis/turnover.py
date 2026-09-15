@@ -1,4 +1,4 @@
-"""Open item A — is a first-sight cache miss a node new to the NETWORK, or new to ME?
+"""Open item A: is a first-sight cache miss a node new to the NETWORK, or new to ME?
 
 VERIFICATION.md R9 ruled `seq` churn out as the explanation for the ~15 pp gap between the
 measured 85.0% hit rate and 100%, leaving first-sight misses as the cause. But "first sight"

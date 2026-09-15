@@ -1,4 +1,4 @@
-"""Gap #4 — how often does a node bump its `seq`, and what does that cost the cache?
+"""Gap #4: how often does a node bump its `seq`, and what does that cost the cache?
 
 V-04 measures the cache hit rate *within* one crawl, where almost no node has time to
 update its record. V-16 shows that rate is a lower bound as lookups increase. V-11 says

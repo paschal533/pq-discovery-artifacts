@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""D6 — how many bytes can a Waku ENR give back, and does that make anything fit?
+"""D6: how many bytes can a Waku ENR give back, and does that make anything fit?
 
 VERIFICATION.md measures Waku's real per-node budgets: 160 B at p50 falling to
 102 B at p99. The smallest post-quantum option in Regime B is UOV Is-pkc at
@@ -187,7 +187,7 @@ def main() -> int:
     withdns = [r for r in rows if r["hosts"]]
 
     print("=" * 74)
-    print(f"D6 — byte reclamation, {len(enrs)} crawled Waku records")
+    print(f"D6: byte reclamation, {len(enrs)} crawled Waku records")
     print("=" * 74)
     print(f"  records with a multiaddrs field : {len(rows)}")
     print(f"  of those, carrying a DNS name   : {len(withdns)}")
@@ -207,10 +207,10 @@ def main() -> int:
 
     a1 = [r["save_a"] for r in any_dup] or [0]
     a2 = [r["save_a2"] for r in any_dup] or [0]
-    print("  Gap #9 — sensitivity to the back-reference cost assumption:")
+    print("  Gap #9: sensitivity to the back-reference cost assumption:")
     print(f"    1-byte reference: median {pct(a1,50):>3} B recovered, mean {sum(a1)/len(a1):>5.1f} B")
     print(f"    2-byte reference: median {pct(a2,50):>3} B recovered, mean {sum(a2)/len(a2):>5.1f} B")
-    print(f"    delta: {sum(a1)/len(a1) - sum(a2)/len(a2):.1f} B per record — the conclusion is insensitive")
+    print(f"    delta: {sum(a1)/len(a1) - sum(a2)/len(a2):.1f} B per record, the conclusion is insensitive")
     print()
 
     for label, key, lossless in (

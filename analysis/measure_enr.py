@@ -2,7 +2,7 @@
 """Measure the real byte composition of Ethereum Node Records.
 
 Decodes `enr:` strings and reports, field by field, how the 300-byte budget
-(EIP-778) is actually spent — separating the cryptographic fields (signature,
+(EIP-778) is actually spent, separating the cryptographic fields (signature,
 public key) from everything else. The residual is the "non-crypto floor", which
 is what a post-quantum identity scheme would have to fit around.
 
@@ -131,7 +131,7 @@ def main() -> int:
     mx = lambda k: max(r[k] for r in rows)
     mn = lambda k: min(r[k] for r in rows)
 
-    print(f"\n=== {label} — {n} records ===\n")
+    print(f"\n=== {label}, {n} records ===\n")
     print(f"{'quantity':24s} {'min':>6s} {'mean':>7s} {'max':>6s}")
     print("-" * 46)
     for key, name in [
