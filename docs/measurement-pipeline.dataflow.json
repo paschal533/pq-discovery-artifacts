@@ -1,0 +1,202 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "PQ-Discovery measurement pipeline",
+    "viewBox": [
+      1080,
+      520
+    ],
+    "quality_profile": "showcase",
+    "legend": {
+      "entries": {
+        "emphasis": {
+          "label": "primary data"
+        },
+        "default": {
+          "label": "supporting data"
+        },
+        "security": {
+          "label": "withheld (contains IPs)"
+        },
+        "dashed": {
+          "label": "needs withheld data"
+        },
+        "database": {
+          "label": "data file"
+        }
+      }
+    }
+  },
+  "stages": [
+    {
+      "label": "Networks"
+    },
+    {
+      "label": "Collect"
+    },
+    {
+      "label": "Record"
+    },
+    {
+      "label": "Analyse"
+    },
+    {
+      "label": "Result"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "eth",
+      "type": "external",
+      "label": "Ethereum",
+      "sublabel": "consensus, 55,095 nodes",
+      "stage": 0,
+      "row": 0
+    },
+    {
+      "id": "waku",
+      "type": "external",
+      "label": "Logos",
+      "sublabel": "Messaging, n=56",
+      "stage": 0,
+      "row": 1
+    },
+    {
+      "id": "crawler",
+      "type": "backend",
+      "label": "Crawler",
+      "sublabel": "sigp/discv5 + patch",
+      "stage": 1,
+      "row": 1
+    },
+    {
+      "id": "bench",
+      "type": "backend",
+      "label": "liboqs",
+      "sublabel": "speed_sig @ adbeba1",
+      "stage": 1,
+      "row": 2
+    },
+    {
+      "id": "raw",
+      "type": "security",
+      "label": "Raw ENRs",
+      "sublabel": "and logs, contain IPs",
+      "stage": 2,
+      "row": 0,
+      "tag": "withheld"
+    },
+    {
+      "id": "csv",
+      "type": "database",
+      "label": "Crawl CSVs",
+      "sublabel": "ts, node_id, seq, size",
+      "stage": 2,
+      "row": 1,
+      "tag": "published"
+    },
+    {
+      "id": "timings",
+      "type": "database",
+      "label": "Speed logs",
+      "sublabel": "liboqs-speed-sig*.txt",
+      "stage": 2,
+      "row": 2,
+      "tag": "published"
+    },
+    {
+      "id": "analysis",
+      "type": "backend",
+      "label": "Analysis",
+      "sublabel": "analysis/*.py",
+      "stage": 3,
+      "row": 1
+    },
+    {
+      "id": "figures",
+      "type": "frontend",
+      "label": "Figures",
+      "sublabel": "re-derivable from data",
+      "stage": 4,
+      "row": 1
+    }
+  ],
+  "flows": [
+    {
+      "id": "eth-lookups",
+      "from": "eth",
+      "to": "crawler",
+      "label": "FINDNODE",
+      "variant": "emphasis"
+    },
+    {
+      "id": "waku-lookups",
+      "from": "waku",
+      "to": "crawler",
+      "label": "FINDNODE",
+      "variant": "default",
+      "route": "straight",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelDy": 26
+    },
+    {
+      "id": "raw-records",
+      "from": "crawler",
+      "to": "raw",
+      "label": "full records",
+      "variant": "security"
+    },
+    {
+      "id": "derived",
+      "from": "crawler",
+      "to": "csv",
+      "label": "derived rows",
+      "variant": "emphasis",
+      "route": "straight",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelDy": 26
+    },
+    {
+      "id": "speed",
+      "from": "bench",
+      "to": "timings",
+      "label": "benchmark",
+      "variant": "default"
+    },
+    {
+      "id": "csv-in",
+      "from": "csv",
+      "to": "analysis",
+      "label": "CSV",
+      "variant": "emphasis",
+      "route": "straight",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelDx": -22
+    },
+    {
+      "id": "timings-in",
+      "from": "timings",
+      "to": "analysis",
+      "label": "timings",
+      "variant": "default"
+    },
+    {
+      "id": "raw-in",
+      "from": "raw",
+      "to": "analysis",
+      "label": "2 scripts only",
+      "variant": "dashed"
+    },
+    {
+      "id": "out",
+      "from": "analysis",
+      "to": "figures",
+      "label": "figures",
+      "variant": "emphasis"
+    }
+  ]
+}

@@ -17,6 +17,21 @@ An ENR is capped at 300 bytes, and the signature sits *inside* the record it sig
 measures what that leaves for cryptography across a real network, what verification actually
 costs per lookup, and whether a new identity scheme could be deployed incrementally at all.
 
+## Pipeline
+
+<p align="center">
+  <img src="docs/measurement-pipeline.svg" width="880"
+       alt="Measurement pipeline: Ethereum and Logos Messaging are crawled with FINDNODE by a patched sigp/discv5 crawler; raw ENRs and logs are withheld because they contain IP addresses, derived crawl CSVs are published; liboqs speed_sig produces published speed logs; analysis scripts read the CSVs and speed logs, and two scripts also need withheld records, to produce the paper figures">
+</p>
+
+Everything on the main path is published, so the figures can be re-derived. The red branch is
+what is withheld and why; the dashed line marks the two scripts that cannot run on published data
+alone (see [What is not here](#what-is-not-here-and-why)). Logos Messaging is crawled with the
+same crawler under protocol id `d5waku`, since its discv5 network is wire-incompatible with
+Ethereum's. Diagram source:
+[`docs/measurement-pipeline.dataflow.json`](docs/measurement-pipeline.dataflow.json), rendered
+with [archify](https://github.com/tt-a1i/archify).
+
 ## Contents
 
 | path | what it is |
